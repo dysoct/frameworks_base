@@ -36,7 +36,6 @@ import android.os.PowerManager;
 import android.net.Uri;
 import android.os.Handler;
 import android.os.UserHandle;
-import android.os.PowerManager;
 import android.provider.Settings;
 import android.util.AttributeSet;
 import android.util.MathUtils;
@@ -242,19 +241,13 @@ public class NotificationPanelView extends PanelView implements
     private final Interpolator mTouchResponseInterpolator =
             new PathInterpolator(0.3f, 0f, 0.1f, 1f);
 
-    private Handler mHandler = new Handler();
-    private SettingsObserver mSettingsObserver;
-
-    private boolean mOneFingerQuickSettingsIntercept;
-    private boolean mDoubleTapToSleepEnabled;
-    private int mStatusBarHeaderHeight;
-    private GestureDetector mDoubleTapGesture;
-
     public NotificationPanelView(Context context, AttributeSet attrs) {
         super(context, attrs);
         setWillNotDraw(!DEBUG);
 
         mSettingsObserver = new SettingsObserver(mHandler);
+        mLockPatternUtils = new LockPatternUtils(mContext);
+
         mDoubleTapGesture = new GestureDetector(mContext, new GestureDetector.SimpleOnGestureListener() {
             @Override
             public boolean onDoubleTap(MotionEvent e) {
@@ -336,7 +329,6 @@ public class NotificationPanelView extends PanelView implements
                 R.dimen.qs_falsing_threshold);
         mPositionMinSideMargin = getResources().getDimensionPixelSize(
                 R.dimen.notification_panel_min_side_margin);
-        mStatusBarHeaderHeight = getResources().getDimensionPixelSize(R.dimen.status_bar_header_height);
     }
 
     public void updateResources() {
@@ -776,9 +768,8 @@ public class NotificationPanelView extends PanelView implements
         if (mBlockTouches) {
             return false;
         }
-        if (mDoubleTapToSleepEnabled
-                && mStatusBarState == StatusBarState.KEYGUARD
-                && event.getY() < mStatusBarHeaderHeight) {
+        if (mDoubleTapToSleepAnywhere
+                && mStatusBarState == StatusBarState.KEYGUARD) {
             mDoubleTapGesture.onTouchEvent(event);
         }
         initDownStates(event);
@@ -2516,14 +2507,12 @@ public class NotificationPanelView extends PanelView implements
         return !mDozing;
     }
 
-        void observe() {
-            ContentResolver resolver = mContext.getContentResolver();
-            resolver.registerContentObserver(Settings.System.getUriFor(
-                    Settings.System.STATUS_BAR_QUICK_QS_PULLDOWN), false, this);
-            resolver.registerContentObserver(Settings.System.getUriFor(
-                    Settings.System.DOUBLE_TAP_SLEEP_GESTURE), false, this);
-            update();
-        }
+    public void launchCamera(boolean animate, int source) {
+        if (source == StatusBarManager.CAMERA_LAUNCH_SOURCE_POWER_DOUBLE_TAP) {
+            mLastCameraLaunchSource = KeyguardBottomAreaView.CAMERA_LAUNCH_SOURCE_POWER_DOUBLE_TAP;
+        } else if (source == StatusBarManager.CAMERA_LAUNCH_SOURCE_WIGGLE) {
+            mLastCameraLaunchSource = KeyguardBottomAreaView.CAMERA_LAUNCH_SOURCE_WIGGLE;
+        } else {
 
             // Default.
             mLastCameraLaunchSource = KeyguardBottomAreaView.CAMERA_LAUNCH_SOURCE_AFFORDANCE;
@@ -2546,12 +2535,38 @@ public class NotificationPanelView extends PanelView implements
         setLaunchingAffordance(false);
     }
 
-        public void update() {
-            ContentResolver resolver = mContext.getContentResolver();
-            mOneFingerQuickSettingsIntercept = Settings.System.getInt(
-                    resolver, Settings.System.STATUS_BAR_QUICK_QS_PULLDOWN, 1) == 1;
-            mDoubleTapToSleepEnabled = Settings.System.getInt(
-                    resolver, Settings.System.DOUBLE_TAP_SLEEP_GESTURE, 1) == 1;
-        }
+    /**
+     * Set whether we are currently launching an affordance. This is currently only set when
+     * launched via a camera gesture.
+     */
+    private void setLaunchingAffordance(boolean launchingAffordance) {
+        getLeftIcon().setLaunchingAffordance(launchingAffordance);
+        getRightIcon().setLaunchingAffordance(launchingAffordance);
+        getCenterIcon().setLaunchingAffordance(launchingAffordance);
+    }
+
+    /**
+     * Whether the camera application can be launched for the camera launch gesture.
+     *
+     * @param keyguardIsShowing whether keyguard is being shown
+     */
+    public boolean canCameraGestureBeLaunched(boolean keyguardIsShowing) {
+        ResolveInfo resolveInfo = mKeyguardBottomArea.resolveCameraIntent();
+        String packageToLaunch = (resolveInfo == null || resolveInfo.activityInfo == null)
+                ? null : resolveInfo.activityInfo.packageName;
+        return packageToLaunch != null &&
+               (keyguardIsShowing || !isForegroundApp(packageToLaunch)) &&
+               !mAfforanceHelper.isSwipingInProgress();
+    }
+
+    /**
+     * Return true if the applications with the package name is running in foreground.
+     *
+     * @param pkgName application package name.
+     */
+    private boolean isForegroundApp(String pkgName) {
+        ActivityManager am = getContext().getSystemService(ActivityManager.class);
+        List<ActivityManager.RunningTaskInfo> tasks = am.getRunningTasks(1);
+        return !tasks.isEmpty() && pkgName.equals(tasks.get(0).topActivity.getPackageName());
     }
 }
